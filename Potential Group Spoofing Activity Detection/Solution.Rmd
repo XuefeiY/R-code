@@ -1,0 +1,276 @@
+---
+title: "GSachs1"
+output: html_document
+---
+
+
+##  Question 1
+Store data into a list
+```{r}
+x <- list()
+for (i in 1:100) {
+  filecom <- paste("Timestamp_", i, "_Com_Data_.txt", sep="")
+  filetime <- paste("Timestamp_", i, "_Trading_Data_.txt", sep ="")
+  
+  x[[2*i-1]] <- read.table(filecom, as.is = TRUE, sep = ",")
+  colnames(x[[2*i-1]]) <- c("t1", "t2")
+  x[[2*i-1]]$t1 <- as.numeric(gsub("trader_([0-9+])", "\\1", x[[2*i-1]]$t1))
+  x[[2*i-1]]$t2 <- as.numeric(gsub("trader_([0-9+])", "\\1", x[[2*i-1]]$t2))
+  
+  x[[2*i]] <- read.table(filetime, as.is = TRUE, sep = ",")
+  colnames(x[[2*i]]) <- c("trader", "stock", "price", "status")
+  x[[2*i]]$trader <- as.numeric(gsub("\\D", "", x[[2*i]]$trader))
+  x[[2*i]]$stock <- as.numeric(gsub("\\D", "", x[[2*i]]$stock))
+}
+```
+
+A function to compute number of PGSA in each timestamp
+```{r}
+PGSA <- function(com, trade) {
+  # Bulid the communication matrix
+  commatrix <- matrix(0, nrow = 500, ncol = 500)
+  commatrix[com[,1] + (com[,2]-1)*500] <-1
+  commatrix <- commatrix + t(commatrix)
+  commatrix[commatrix > 1] <-1
+  diag(commatrix) <- 0
+  
+  # Build the trade matrix
+  trade$trader <- gsub("\\D", "", trade$trader)
+  trade$stock <- gsub("\\D", "", trade$stock)
+  tradematrix <- matrix(0, nrow = 1000, ncol = 500)
+
+  for (i in 1:1000) {
+    tradematrix[i, as.numeric(trade$trader[trade$stock==i])] <- 1
+  }
+  
+  # co-trading: how many similar stocks did you trade?
+  co_tradingmatrix <- t(tradematrix) %*% tradematrix;
+  diag(co_tradingmatrix) <-0;
+  
+  #pgsa
+  pgsa <- diag (tradematrix %*% commatrix %*% t(tradematrix))/2
+  return(list(pgsa, tradematrix, commatrix,  co_tradingmatrix))
+}
+```
+
+Create a vector to stack the number of PGSAs in each timestamp
+```{r}
+system.time({
+  pgsavector <- c()
+  for (i in 1:1) {
+    pgsa <- PGSA(x[[2*i-1]], x[[2*i]])[[1]]
+    pgsavector[i] <- sum(pgsa)
+  }
+})
+```
+
+```{r}
+sum(pgsavector > 0)
+```
+
+
+
+## Question 2
+```{r}
+which.min(pgsavector)
+```
+
+
+
+## Question 3
+```{r}
+getpgsa <- function(com, trade, time) {
+  stock0 <- rep(1:1000, PGSA(com, trade)[[1]])
+  tradematrix <- PGSA(com, trade)[[2]]
+  commatrix <- PGSA(com, trade)[[3]]
+  co_tradingmatrix <- PGSA(com, trade)[[4]]
+  data <- NULL
+  for (i in 1: 1000) {
+    # two traders buy/sell at the same time
+    trade0 <- tradematrix[i,] %*% t(tradematrix[i,])
+    pgsamatrix <- trade0 * commatrix
+    pgsamatrix[lower.tri(pgsamatrix)] <- 0
+    index <- which(pgsamatrix==1)
+    trader01 <- index %% 500
+    trader02 <- ceiling(index/500)
+    trader <- cbind(trader01, trader02)
+    ##print(trader)
+    ##print((cbind(trade$trader, trade$price)))
+    ##data1<-merge(trader, subset(trade, select=c("trader", "price")), by.x=c("trader01"), by.y=c("trader"))
+    ##print(data1)
+    ## data1<-merge(data1, as.matrix(cbind(trade$trader, trade$price)), by.x=c("trader02"), by.y=c("trader"))
+    
+    
+    p01 <- trade$price[trade$trader %in% sort(trader01) & trade$stock == i] 
+    p02 <- trade$price[trade$trader %in% sort(trader02) & trade$stock == i] 
+    status01 <- trade$status[trade$trader %in% sort(trader01) & trade$stock == i] 
+    status02 <- trade$status[trade$trader %in% sort(trader02) & trade$stock == i] 
+    repnum1 <- table(trader01)
+    repnum2 <- table(trader02)
+    p01 <- rep(p01, repnum1)
+    p02 <- rep(p02, repnum2)
+    status01 <- rep(status01, repnum1)
+    status02 <- rep(status02, repnum2)
+    data0 <- cbind(trader[order(trader[,1]),], p01, status01)
+    data0 <- cbind(data0[order(trader[,2]),], p02, status02)
+    # data0$pricediff <- abs(data0[,3]-data0[,5])
+    data <- rbind(data, data0)
+  }
+  dat <- data.frame(data, stock = stock0, timestamp = time)
+  dat1 <- data.frame(matrix=co_tradingmatrix , timestamp = time)
+  return(list(dat, dat1))
+}
+```
+
+Test the system time for one timestamp
+```{r}
+system.time({
+  temp <- getpgsa(x[[1]], x[[2]], 1)[[1]];
+  
+  co_tradingmatrix<- getpgsa(x[[1]], x[[2]], 1)[[2]];
+})
+```
+
+
+```{r}
+all <- data.frame(trader1=NA, trader=NA, stock=NA, timestamp=NA)
+all <- all[-1,]
+
+cotrad <- data.frame(matrix=NA, timestamp=NA)
+cotrad <- cotrad[-1,]
+
+system.time({
+  for (i in 1:100) {
+  #temp <- getpgsa(x[[2*i-1]], x[[2*i]], i)[[1]]   
+  #all <- rbind(all, temp)
+  temp_cotrad <- getpgsa(x[[2*i-1]], x[[2*i]], i)[[2]]   
+  cotrad <- rbind(cotrad, temp_cotrad)
+  
+  }
+  #write.csv(all, "all3.csv", row.names = FALSE)
+  write.csv(cotrad, "cotrad.csv", row.names = FALSE)
+})
+```
+
+
+
+## Question 4
+```{r}
+all0 <- all 
+all$p01 <- as.numeric(as.character(all$p01))
+all$p02 <- as.numeric(as.character(all$p02))
+all$pricediff <- abs(all$p01 - all$p02)
+# Keep pgsa with different status
+all <- all[which(all$status01!=all$status02),]
+write.csv(all, "reduced_all.csv", row.names = FALSE)
+# Eliminate larger difference
+minprice <- apply(all[,c(3,5)], 1, min)
+index <- (all$pricediff)/minprice > 0.5
+all1 <- all[!index,]
+write.csv(all1, "reduced_all2.csv", row.names = FALSE)
+hist(all1$pricediff)
+```
+
+### Linear Regression
+```{r}
+all1 <- read.csv("reduced_all1.csv", as.is = TRUE)
+cotrad <- read.csv("cotrad.csv", as.is = TRUE)
+# Hypothesis: we think smaller price difference indicates more riskness
+index <- which.max(all1$pricediff)
+all1[index,]
+totpgsa <- table(all1$timestamp)
+all1$totpgsa <- rep(totpgsa, totpgsa)
+all1$sellhigher <- sign(all1$p01 - all1$p02) * (all1$status01=="SELL")
+# table(all1$trader01[all1$timestamp==1], all1$trader02[all1$timestamp==1])
+hist(all1$pricediff, main = "Price Diffence for Potentially Risky PGSAs", xlab = "price difference")
+lm0 <- lm(pricediff ~ totpgsa + sellhigher, data = all1)
+summary(lm0)
+# par(mfrow=c(2,2))
+# plot(lm0)
+# edge betweenness centrality
+library(igraph)
+gra <- graph_from_edgelist(as.matrix(all1[,1:2]), directed = FALSE)
+all1$ebc <- edge_betweenness(graph = gra, e = E(gra), directed = FALSE, weights = NULL)
+# Hypothesis: More correlated trades mean more likelihood of spoofing
+# total trades for each timestamp
+tradestacked <- matrix(0, ncol = 100);
+for (i in 1:100) {
+  for (j in 1:500) {
+    tradestacked[i] <-  tradestacked[i] + sum(cotrad[500*(i-1)+1:500,j])
+  }
+}
+all1$tradestack <- rep(t(tradestacked), table(all1$timestamp))
+# total trades for two traders have in common
+tradetot <- matrix(0, ncol = 500, nrow = 500)
+for (i in 1:100) {
+  tradetot <-  tradetot + cotrad[cotrad[,501]==i,-501]
+}
+tradetot0 <- as.matrix(tradetot)
+all1$tradetotal <- 0
+for (i in 1:nrow(all1)) {
+  all1$tradetotal[i] <- tradetot0[(all1$trader01[i]-1)*500 + all1$trader02[i]]
+}
+write.csv(all1, "reduced_final.csv", row.names = FALSE)
+lm1 <- lm(pricediff ~ totpgsa + sellhigher + ebc + as.factor(timestamp) + tradestack + 
+            tradetotal, data = all1)
+summary(lm1)
+anova(lm1)
+
+lm2 <- lm(pricediff ~ totpgsa + sellhigher + ebc + tradestack + tradetotal, data = all1)
+summary(lm2)
+anova(lm2)
+```
+
+## Riskiest PGSA: smallest price difference
+```{r}
+all1[which(all1$pricediff==min(all1$pricediff)),]
+```
+
+
+
+## Data Visualazation
+```{r}
+library(igraph)
+
+x <- read.csv("reduced_all2.csv", as.is = TRUE)
+top4 <- sort(unique(x$totpgsa), decreasing = TRUE)[1:4]
+
+pre <- function(i) {
+  xmaxpgsa <- x[which(x$totpgsa==top4[i]),]
+  time <- unique(xmaxpgsa$timestamp)     # store the number of timestamp
+  t <- table(xmaxpgsa$stock)
+  stock <- as.numeric(names(which(t==max(t))))  # store the number of stock
+  x0 <- xmaxpgsa[xmaxpgsa$stock==stock,]
+  x0 <- x0[,c(1:2,9)]
+  max <- range(x0$pricediff)[2]
+  min <- range(x0$pricediff)[1]
+  ab <- max-min
+  x0$width <- round((max - x0$pricediff)/ab*10)+1
+  return(list(time, stock, x0))
+}
+
+
+gra <- function(time, stock, x0, color) {
+  # Simplify graph
+  net.bg <- graph_from_edgelist(as.matrix(x0[,1:2]), directed = FALSE)
+  net.bg <- simplify(net.bg)
+  
+  # Nodes with PGSA
+  net.bg <- delete.vertices(net.bg, which(degree(net.bg)<1))
+  V(net.bg)$size <- 10
+  V(net.bg)$frame.color <- "white"
+  V(net.bg)$color <- color
+  E(net.bg)$arrow.mode <- 0
+  E(net.bg)$width <- x0$width
+  
+  l <- layout.fruchterman.reingold(net.bg)
+  nn <- paste("Timestamp", time, "&", "Stock", stock, sep =" ")
+  return(plot(net.bg, layout=l, main=nn))
+}
+
+for (i in 1:4) {
+  gra(pre(i)[[1]], pre(i)[[2]], pre(i)[[3]], i)
+}
+
+```
+
